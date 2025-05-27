@@ -6,6 +6,14 @@ import plotly.graph_objects as go
 import numpy as np
 import io
 import json
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
+from reportlab.lib.units import inch
+import dicttoxml
+import xml.dom.minidom
+from datetime import datetime
 
 # Konfiguration av sidan
 st.set_page_config(
@@ -249,6 +257,132 @@ def export_to_csv(results_df, csf_data):
     
     return output.getvalue()
 
+def export_to_pdf(results_df, csf_data):
+    """Exportera alla data till PDF"""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4)
+    styles = getSampleStyleSheet()
+    story = []
+    
+    # Titel
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=16,
+        spaceAfter=30,
+        textColor=colors.HexColor('#1f77b4')
+    )
+    story.append(Paragraph("CPM-modell för ILS-mjukvaror - ROC-analys", title_style))
+    story.append(Paragraph(f"Genererad: {datetime.now().strftime('%Y-%m-%d %H:%M')}", styles['Normal']))
+    story.append(Spacer(1, 20))
+    
+    # CSF-viktningar
+    story.append(Paragraph("CSF Viktningar (ROC-metod)", styles['Heading2']))
+    csf_df = pd.DataFrame(csf_data)
+    csf_table_data = [['CSF', 'Vikt', 'Rank']]
+    for _, row in csf_df.iterrows():
+        csf_table_data.append([
+            row['name'][:50] + '...' if len(row['name']) > 50 else row['name'],
+            f"{row['weight']:.4f}",
+            str(row['rank'])
+        ])
+    
+    csf_table = Table(csf_table_data, colWidths=[4*inch, 1*inch, 0.8*inch])
+    csf_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black)
+    ]))
+    story.append(csf_table)
+    story.append(Spacer(1, 20))
+    
+    # Sammanfattade resultat
+    story.append(Paragraph("Sammanfattade Resultat", styles['Heading2']))
+    if not results_df.empty:
+        result_table_data = [['Leverantör', 'Råpoäng', 'Viktad Summa', 'Normaliserad (0-100)']]
+        for _, row in results_df.iterrows():
+            result_table_data.append([
+                row['Vendor'],
+                str(row['Raw Sum']),
+                str(row['Weighted Sum']),
+                str(row['Normalized (0-100)'])
+            ])
+        
+        result_table = Table(result_table_data, colWidths=[2*inch, 1.2*inch, 1.2*inch, 1.5*inch])
+        result_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 10),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black)
+        ]))
+        story.append(result_table)
+    
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+def export_to_xml(results_df, csf_data):
+    """Exportera alla data till XML"""
+    # Skapa data-struktur för XML
+    export_data = {
+        'metadata': {
+            'generated_at': datetime.now().isoformat(),
+            'application': 'CPM-modell för ILS-mjukvaror',
+            'method': 'ROC-analys'
+        },
+        'csf_weights': [],
+        'vendor_ratings': [],
+        'results': []
+    }
+    
+    # CSF-viktningar
+    for csf in csf_data:
+        export_data['csf_weights'].append({
+            'name': csf['name'],
+            'weight': float(csf['weight']),
+            'rank': int(csf['rank'])
+        })
+    
+    # Leverantörsbetyg
+    if not st.session_state.ratings_df.empty:
+        for vendor in st.session_state.vendor_list:
+            vendor_data = {'vendor_name': vendor, 'ratings': []}
+            for csf in csf_data:
+                rating = st.session_state.ratings_df.loc[vendor, csf['name']]
+                vendor_data['ratings'].append({
+                    'csf_name': csf['name'],
+                    'rating': float(rating)
+                })
+            export_data['vendor_ratings'].append(vendor_data)
+    
+    # Resultat
+    if not results_df.empty:
+        for _, row in results_df.iterrows():
+            export_data['results'].append({
+                'vendor': row['Vendor'],
+                'raw_sum': float(row['Raw Sum']),
+                'weighted_sum': float(row['Weighted Sum']),
+                'normalized_score': float(row['Normalized (0-100)'])
+            })
+    
+    # Konvertera till XML
+    xml = dicttoxml.dicttoxml(export_data, custom_root='cpm_analysis', attr_type=False)
+    
+    # Formatera XML för bättre läsbarhet
+    dom = xml.dom.minidom.parseString(xml)
+    pretty_xml = dom.toprettyxml(indent="  ")
+    
+    return pretty_xml.encode('utf-8')
+
 def show_roc_debug():
     """Visa debug-information för ROC-beräkningar"""
     if 'roc_debug' not in st.session_state:
@@ -457,13 +591,34 @@ def main():
             st.subheader("📊 Sammanfattning")
             st.dataframe(results_df, use_container_width=True)
             
-            # Export-knapp
+            # Export-knappar
+            st.write("**📁 Exportera resultat:**")
+            
+            # CSV Export
             csv_data = export_to_csv(results_df, csf_data)
             st.download_button(
-                label="📁 Exportera till CSV",
+                label="📄 Ladda ner CSV",
                 data=csv_data,
                 file_name="cpm_analys_resultat.csv",
                 mime="text/csv"
+            )
+            
+            # PDF Export
+            pdf_data = export_to_pdf(results_df, csf_data)
+            st.download_button(
+                label="📋 Ladda ner PDF",
+                data=pdf_data,
+                file_name="cpm_analys_resultat.pdf",
+                mime="application/pdf"
+            )
+            
+            # XML Export
+            xml_data = export_to_xml(results_df, csf_data)
+            st.download_button(
+                label="📊 Ladda ner XML",
+                data=xml_data,
+                file_name="cpm_analys_resultat.xml",
+                mime="application/xml"
             )
         
         with col2:
