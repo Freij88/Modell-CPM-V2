@@ -4,11 +4,9 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.11"
 dependencies = [
-    "dicttoxml>=1.7.16",
     "matplotlib>=3.10.3",
     "numpy>=2.2.6",
     "pandas>=2.2.3",
     "plotly>=6.1.1",
-    "reportlab>=4.4.1",
     "streamlit>=1.45.1",
 ]
