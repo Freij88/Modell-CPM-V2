@@ -309,91 +309,50 @@ def main():
             st.success(f"Lade till: {new_csf}")
             st.rerun()
         
-
+        # Ta bort CSF
+        if len(st.session_state.csf_list) > 1:
+            csf_to_remove = st.selectbox("Ta bort CSF:", [""] + st.session_state.csf_list)
+            if st.button("🗑️ Ta bort CSF") and csf_to_remove:
+                idx = st.session_state.csf_list.index(csf_to_remove)
+                st.session_state.csf_list.remove(csf_to_remove)
+                # Uppdatera order array korrekt
+                st.session_state.csf_order.pop(idx)
+                # Justera index för CSF:er som kommer efter den borttagna
+                st.session_state.csf_order = [pos if pos < idx else pos - 1 for pos in st.session_state.csf_order]
+                initialize_ratings_dataframe()
+                st.success(f"Tog bort: {csf_to_remove}")
+                st.rerun()
         
         # CSF-prioritering för ROC-vikter
         st.subheader("🎯 CSF-prioritering (för ROC-vikter)")
-        st.write("Klicka på pilarna för att ändra prioritetsordning:")
-        st.caption("Högst upp = högst prioritet = störst vikt")
+        st.write("Ange prioritetsordning (1 = högst prioritet):")
         
-        # Få aktuell ordning baserat på csf_order
-        current_order = []
-        for priority_pos in range(len(st.session_state.csf_list)):
-            # Hitta vilket CSF som har denna prioritetsposition
-            for csf_idx, order_pos in enumerate(st.session_state.csf_order):
-                if order_pos == priority_pos:
-                    current_order.append((csf_idx, st.session_state.csf_list[csf_idx]))
-                    break
+        # Visa aktuell ordning och låt användaren ändra
+        csf_data = get_current_csf_data()
         
-        # Visa varje CSF med upp/ner-knappar
-        for display_idx, (csf_idx, csf_name) in enumerate(current_order):
-            col1, col2, col3, col4 = st.columns([0.8, 0.8, 4, 1])
+        # Sortera efter nuvarande rank för visning
+        sorted_csfs = sorted(csf_data, key=lambda x: x["rank"])
+        
+        reorder_needed = False
+        for csf in sorted_csfs:
+            csf_idx = st.session_state.csf_list.index(csf["name"])
+            current_rank = csf["rank"]
             
-            with col1:
-                # Upp-knapp (inte för första elementet)
-                if display_idx > 0:
-                    if st.button("⬆️", key=f"up_{csf_idx}_{display_idx}", help="Flytta upp"):
-                        # Byt plats med elementet ovanför
-                        current_csf_order_pos = st.session_state.csf_order[csf_idx]
-                        above_csf_idx = current_order[display_idx - 1][0]
-                        above_csf_order_pos = st.session_state.csf_order[above_csf_idx]
-                        
-                        # Byt platserna
-                        st.session_state.csf_order[csf_idx] = above_csf_order_pos
-                        st.session_state.csf_order[above_csf_idx] = current_csf_order_pos
-                        st.rerun()
-                else:
-                    st.write("")  # Tom plats för första elementet
+            new_rank = st.number_input(
+                f"{csf['name'][:40]}..." if len(csf['name']) > 40 else csf['name'],
+                min_value=1,
+                max_value=len(st.session_state.csf_list),
+                value=current_rank,
+                key=f"rank_{csf['name']}"
+            )
             
-            with col2:
-                # Ner-knapp (inte för sista elementet)
-                if display_idx < len(current_order) - 1:
-                    if st.button("⬇️", key=f"down_{csf_idx}_{display_idx}", help="Flytta ner"):
-                        # Byt plats med elementet nedanför
-                        current_csf_order_pos = st.session_state.csf_order[csf_idx]
-                        below_csf_idx = current_order[display_idx + 1][0]
-                        below_csf_order_pos = st.session_state.csf_order[below_csf_idx]
-                        
-                        # Byt platserna
-                        st.session_state.csf_order[csf_idx] = below_csf_order_pos
-                        st.session_state.csf_order[below_csf_idx] = current_csf_order_pos
-                        st.rerun()
-                else:
-                    st.write("")  # Tom plats för sista elementet
-            
-            with col3:
-                # CSF-namn med aktuell rank och vikt
-                csf_data = get_current_csf_data()
-                csf_info = next((c for c in csf_data if c["name"] == csf_name), None)
-                if csf_info:
-                    st.write(f"**{display_idx + 1}.** {csf_name}")
-                    st.caption(f"Vikt: {csf_info['weight']:.4f}")
-                else:
-                    st.write(f"**{display_idx + 1}.** {csf_name}")
-            
-            with col4:
-                # Ta bort-knapp för denna CSF
-                if len(st.session_state.csf_list) > 1:
-                    if st.button("🗑️", key=f"remove_{csf_idx}_{display_idx}", help=f"Ta bort {csf_name}"):
-                        # Ta bort CSF
-                        st.session_state.csf_list.pop(csf_idx)
-                        st.session_state.csf_order.pop(csf_idx)
-                        
-                        # Justera index för återstående CSF:er
-                        st.session_state.csf_order = [
-                            pos if idx < csf_idx else pos - 1 if pos > 0 else 0 
-                            for idx, pos in enumerate(st.session_state.csf_order) 
-                            if idx != csf_idx
-                        ]
-                        
-                        # Normalisera ordningen så den blir 0, 1, 2, ...
-                        sorted_pairs = sorted(enumerate(st.session_state.csf_order), key=lambda x: x[1])
-                        for new_pos, (old_idx, _) in enumerate(sorted_pairs):
-                            st.session_state.csf_order[old_idx] = new_pos
-                        
-                        initialize_ratings_dataframe()
-                        st.success(f"Tog bort: {csf_name}")
-                        st.rerun()
+            if new_rank != current_rank:
+                # Uppdatera prioritetsordning
+                st.session_state.csf_order[csf_idx] = new_rank - 1
+                reorder_needed = True
+        
+        if reorder_needed:
+            st.rerun()
         
         st.divider()
         
